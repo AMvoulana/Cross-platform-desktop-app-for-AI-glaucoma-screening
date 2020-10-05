@@ -1,0 +1,515 @@
+<!---------------------------------------------------------------------------------------->
+<!-------------------------------------- CODE HTML --------------------------------------->
+<!---------------------------------------------------------------------------------------->
+<template class="task-template">
+    <section id="new-section" class="section js-section u-category-native-ui">
+
+    <h1 id="title">Nouveau Traitement</h1>
+
+    <h1>Méthode</h1>
+    <p>Veuillez sélectionner une image d'un fond d'oeil, rognez-la si necessaire puis choississez le type de dépistage et d'IA à utiliser, enfin lancez le traitement. Cliquez sur le bouton Retour pour retourner à la sélection d'image.</p>
+    <h3>Image</h3>
+
+    <!-- Zone de drag & drop-->
+    <div id="drop-region" class="drop-region">
+        <div class="drop-message">
+            <h1>Glisser votre image ici</h1>
+            <h4>Ou cliquez ici pour sélectionner une image</h4>
+        </div>
+    </div>
+
+    <!-- Zone du crop (invisible dans un premier temps) -->
+    <div id="div-crop">
+        <div>
+            <img id="img-crop">
+        </div><br>
+
+        <!-- Bouton Cropper-->
+        <div style="text-align: center;">
+            <input type="button" value="   RETOUR   " style="visibility: hidden;" id="btn-newImg" onclick="reselect()">
+            <input type="button" value="   ROGNAGE MANUEL   " id="btn-cropper-manu">
+            <input type="button" value="   ROGNAGE AUTO   " disabled id="btn-cropper-auto" onclick="autocrop()">
+        </div><br>
+
+        <div style="text-align: center;">
+            <input type="button" value="   ROGNER   " style="visibility: hidden;" id="btn-cropper">
+        </div>
+        <br>
+
+        <h3 style="text-align: left; visibility: hidden;" id="result-title">Résultat</h3>
+        <div id="result"></div><br>
+    </div>
+
+
+    <!-- Listes déroulantes -->
+    <!--<div id="liste-val" style="visibility: hidden;">-->
+        <div style="text-align: center;">
+            <form>
+                <td>
+                    <select name="Rubrique" onchange='Choix(this.form)' id="traitement" style="visibility: hidden;" class="select-wrapper">
+                        <option>- Choix du type de dépistage -</option>
+                        <option>Dépistage précoce classique</option>
+                        <option>Dépistage et évaluation des stades</option>
+                    </select>
+                </td>
+
+                <td>
+                    <select name="Page" style="visibility:hidden;" onchange='Active(this.form)' id="modele" class="select-wrapper">
+                        <option>- Choix de l'IA de dépistage -</option>
+                    </select>
+                </td>
+            </form>
+        </div>
+        <br>
+
+        <!-- Bouton Valider -->
+        <div style="text-align: center;">
+            <input type="button" style="visibility:hidden;" value="   VALIDER   " id="valider" onclick="msg()">
+        </div>
+    <!--</div>-->
+<!---------------------------------------------------------------------------------------->
+<!---------------------------------- FIN CODE HTML --------------------------------------->
+<!---------------------------------------------------------------------------------------->
+
+
+
+<!---------------------------------------------------------------------------------------->
+<!-------------------------------- CODE JAVASCRIPT --------------------------------------->
+<!---------------------------------------------------------------------------------------->
+
+
+<!---------------------------- Partie Drag & Drop ------------------------------>
+<script>
+
+const zerorpc = require("zerorpc")
+const constLargeEnoughHeartbeat = 60000
+clientOptions = {
+  "heartbeatInterval": constLargeEnoughHeartbeat,
+}
+let client = new zerorpc.Client(clientOptions)
+client.connect("tcp://127.0.0.1:4242")
+
+var imgPath;
+var isCropped = 0;
+var // where files are dropped + file selector is opened
+dropRegion = document.getElementById("drop-region"),
+// selection manuelle
+//manuFile = document.getElementById("files"),
+// where images are previewed
+imagePreviewRegion = document.getElementById("image-preview");
+
+// open file selector when clicked on the drop region
+var fakeInput = document.createElement("input");
+fakeInput.type = "file";
+fakeInput.accept = "image/*";
+fakeInput.multiple = true;
+dropRegion.addEventListener('click', function() {
+    fakeInput.click();
+});
+
+fakeInput.addEventListener("change", function() {
+    var files = fakeInput.files;
+    if(files.length > 1) {
+        alert("Select only 1 image !");
+    }
+    else {
+        handleFiles(files);
+    }
+});
+
+function preventDefault(e) {
+    e.preventDefault();
+      e.stopPropagation();
+}
+
+dropRegion.addEventListener('dragenter', preventDefault, false);
+dropRegion.addEventListener('dragleave', preventDefault, false);
+dropRegion.addEventListener('dragover', preventDefault, false);
+dropRegion.addEventListener('drop', preventDefault, false);
+
+
+function handleDrop(e) {
+    var dt = e.dataTransfer,
+        files = dt.files;
+
+    if (files.length == 1) {
+        handleFiles(files);
+    }
+    else if (files.length > 1) {
+        alert("Select only 1 image ! ");
+    }
+    else {
+        // check for img
+        var html = dt.getData('text/html'),
+            match = html && /\bsrc="?([^"\s]+)"?\s*/.exec(html),
+            url = match && match[1];
+        if (url) {
+            uploadImageFromURL(url);
+            return;
+        }
+    }
+
+    function uploadImageFromURL(url) {
+        var img = new Image;
+        var c = document.createElement("canvas");
+        var ctx = c.getContext("2d");
+
+        img.onload = function() {
+            c.width = this.naturalWidth;     // update canvas size to match image
+            c.height = this.naturalHeight;
+            ctx.drawImage(this, 0, 0);       // draw in image
+            c.toBlob(function(blob) {        // get content as PNG blob
+
+                // call our main function
+                handleFiles( [blob] );
+
+            }, "image/png");
+        };
+        img.onerror = function() {
+            alert("Error in uploading");
+        }
+        img.crossOrigin = "";              // if from different origin
+        img.src = url;
+    }
+}
+
+dropRegion.addEventListener('drop', handleDrop, false);
+
+function handleFiles(files) {
+    for (var i = 0, len = files.length; i < len; i++) {
+        if (validateImage(files[i]))
+            imgPath = files[0].path;
+            crop();
+    }
+}
+
+function validateImage(image) {
+    // check the type
+    var validTypes = ['image/jpeg', 'image/png', 'image/gif'];
+    if (validTypes.indexOf( image.type ) === -1) {
+        alert("Invalid File Type");
+        return false;
+    }
+
+    // check the size
+    var maxSizeInBytes = 10e6; // 10MB
+    if (image.size > maxSizeInBytes) {
+        alert("File too large");
+        return false;
+    }
+
+    return true;
+}
+
+</script>
+<!-------------------------- Fin Partie Drag & Drop ---------------------------->
+
+
+
+<!--------------------------------  Partie Crop -------------------------------->
+<script>
+// Crop Manuel
+function crop() {
+    // On affiche le contenu de la div div-crop
+    var divCrop = document.getElementById("div-crop");
+    divCrop.style.display = "contents";
+    divCrop.style.border = "1px dashed rgba(0,0,0,0.5)"
+
+    // On masque le contenu de la div drop-Region (qui n'est plus utile)
+    var dropRegion = document.getElementById("drop-region");
+    dropRegion.style.display = "none";
+
+    // On utilise le crop
+    var img = document.getElementById("img-crop");
+    img.src = imgPath;
+
+    // On active le input pour rechoisir une image
+    var reselect = document.getElementById("btn-newImg");
+        reselect.style.visibility = "visible";
+
+    img.onload = function(){
+        var crop = document.getElementById("btn-cropper");
+
+        // On active le bouton Rognage Manuel jusqu'ici désactivé
+        var cropManu = document.getElementById("btn-cropper-manu");
+        cropManu.disabled = false;
+        cropManu.style.cursor = "pointer";
+        cropManu.style.backgroundColor = "rgba(4, 180, 134, 0.01)";
+        cropManu.style.transition = "color 0.2s ease-in-out, border-color 0.2s ease-in-out, background-color 0.2s ease-in-out";
+
+        // On active le bouton Rognage Auto jusqu'ici désactivé
+        var cropAuto = document.getElementById("btn-cropper-auto");
+        cropAuto.disabled = false;
+        cropAuto.style.cursor = "pointer";
+        cropAuto.style.backgroundColor = "rgba(4, 180, 134, 0.01)";
+        cropAuto.style.transition = "color 0.2s ease-in-out, border-color 0.2s ease-in-out, background-color 0.2s ease-in-out";
+
+
+        // Action du bouton Rognage Manuel : on affichage le cadre de croppage et le bouton Rogner
+        cropManu.onclick = function () {
+            var cropper = new Cropper(img);
+            cropManu.style.display = "none";
+            crop.style.visibility = "visible";
+            crop.style.backgroundColor = "rgba(4, 180, 134, 0.01)";
+            crop.style.cursor = "pointer";
+
+            // Action du bouton : on crée une nouvelle image de l'image croppée
+            crop.onclick = function () {
+                var result = document.getElementById('result');
+                result.innerHTML = ''; // On vide le contenu de la div Result
+
+                // On affiche le titre Resultat
+                var  title = document.getElementById("result-title");
+                title.style.visibility = "visible";
+
+                // On ajoute l'image croppée sur la page
+                result.appendChild(cropper.getCroppedCanvas({maxWidth: 550}));
+                var fs = require('fs');
+                var canvas = cropper.getCroppedCanvas({maxWidth: 550});
+                const url = canvas.toDataURL('image/jpg', 0.8);
+
+                // remove Base64 stuff from the Image
+                const base64Data = url.replace(/^data:image\/png;base64,/, "");
+                fs.writeFile("./temp/cropped.jpg", base64Data, 'base64', function (err) {
+                    console.log(err);
+                });
+                isCropped = 1;
+            };
+        };
+
+        // On active la liste déroulante Type de Traitement & Modèle
+        var trait = document.getElementById("traitement");
+        trait.style.visibility = "visible";
+
+        var mod = document.getElementById("modele");
+        mod.style.visibility = "visible";
+    }
+};
+
+
+function autocrop() {
+  var test = document.getElementById("modele");
+  client.invoke("crop", String(imgPath), (error, res) => {
+    if(error) {
+      console.error(error);
+    } else {
+      if(res == 'OK') {
+        var result = document.getElementById('result');
+        result.innerHTML = ''; // On vide le contenu de la div Result
+        var  title = document.getElementById("result-title");
+        title.style.visibility = "visible";
+        var croppedImage = new Image();
+        croppedImage.onload = function() {
+          result.appendChild(croppedImage);
+        }
+        croppedImage.src = "./temp/cropped.jpg";
+        isCropped = 1;
+      } else {
+        alert('Rognage automatique impossible, veuillez effectuer un rognage manuel')
+      }
+    }
+    });
+}
+
+function reselect() {
+    location.reload();
+    /*// On masque le contenu de la div drop-Region (qui n'est plus utile)
+    var dropRegion = document.getElementById("drop-region");
+    dropRegion.display = "contents";
+
+    // On utilise le crop
+    var img = document.getElementById("img-crop");
+    img.display = "none";
+
+    var resel = document.getElementById("btn-newImg");
+    var files = resel.files;
+
+    if(files.length > 1) {
+        alert("Select only 1 image !");
+    }
+    else {
+        alert(files[0]);
+        document.getElementById("div-crop").innerHTML = "";
+        handleFiles(files);
+    }*/
+
+}
+
+</script>
+<!------------------------------- Fin Partie Crop ------------------------------>
+
+
+
+<!------------------------ Partie Listes Déroulantes --------------------------->
+
+<script type="text/javascript">
+function Choix(form) {
+    var val = document.getElementById("valider");
+    i = form.Rubrique.selectedIndex;
+
+    if (i == 0) {
+        //mod.style.visibility = "hidden";
+        form.Page.innerHTML="<option></option>";
+        form.Page.options[0].text="- Choix de l'IA de dépistage -";
+
+        var val = document.getElementById("valider");
+        val.style.visibility = "hidden";
+
+    return;
+    }
+    form.Page.selectedIndex = 0;
+
+    switch (i) {
+      case 1:
+        var txt = new Array('vgg16', 'densenet121', 'mobilenet', 'inceptionv3');
+        break;
+      case 2:
+        var txt = new Array('vgg16_3', 'densenet121_3', 'mobilenet_3');
+        break;
+    }
+
+    form.Page.innerHTML="<option></option>";
+    form.Page.options[0].text="- Choix de l'IA de dépistage -";
+
+    for (i=0;i<txt.length;i++) {
+        form.Page.appendChild(document.createElement("option"));
+        form.Page.options[i+1].text=txt[i];
+    }
+}
+
+function Active(form) {
+    var val = document.getElementById("valider");
+    i = form.Page.selectedIndex;
+    if (i > 0) {
+      val.style.visibility = "visible";
+    } else {
+      val.style.visibility = "hidden";
+    }
+}
+
+function msg() {
+  var test = document.getElementById("modele");
+  var definitiveImgPath
+  if (isCropped == 1) {
+    definitiveImgPath = "./temp/cropped.jpg"
+  } else {
+    definitiveImgPath = imgPath
+  }
+  client.invoke("test", String(modele.value), definitiveImgPath, (error, res) => {
+    if(error) {
+      console.error(error);
+    } else {
+      alert("Test utilisé : " + String(modele.value) + "\n" + res);
+    }
+    });
+}
+</script>
+<!----------------------- Fin Partie Listes Déroulantes ------------------------>
+
+<!----------------------------------------------------------------------------------------->
+<!--------------------------------- FIN CODE JAVASCRIPT ----------------------------------->
+<!----------------------------------------------------------------------------------------->
+
+
+
+<!----------------------------------------------------------------------------------------->
+<!--------------------------------------- CODE CSS ---------------------------------------->
+<!----------------------------------------------------------------------------------------->
+
+<!------------- CSS pour bouton --------->
+<style>
+input[type="button"], input[type="file"],
+.button {
+	-moz-transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+	-webkit-transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+	-ms-transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+	transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+	background: none;
+	border: solid 1px;
+	border-radius: 0;
+	border-color: rgba(0,0,0,.3);
+	color: black;
+	cursor: pointer;
+	display: inline-block;
+	font-size: 0.6em;
+	font-weight: normal;
+	letter-spacing: 2px;
+	padding: 0 0.75em;
+	line-height: 3.75em;
+	text-align: center;
+	text-transform: uppercase;
+	background-color:rgba(4, 180, 134, 0.01);
+}
+
+input[type="button"]:hover, input[type="file"]:hover,
+.button:hover {
+	background: rgba(0, 102, 204, 0.2);
+	border-color: rgba(0,0,0,.4);
+}
+/*-------------- Fin CSS pour bouton ------------*/
+
+
+/*------------- CSS pour Zone de Crop -----------*/
+.container {
+    margin: 20px auto;
+    max-width: 450px;
+    max-height: 450px;
+}
+
+img {
+    max-width: 100%;
+}
+
+#drop-region {
+    border: 1px dashed rgba(0,0,0,0.5);
+    color: rgba(0,0,0,0.6);
+    padding: 1em;
+    margin-top: 20px;
+    margin-right: 10px;
+    margin-bottom: 10px;
+    margin-left: 5px;
+    cursor: pointer;
+    position: relative;
+    text-align: center;
+    transition: opacity .1s ease-out;
+}
+
+#drop-region:hover {
+    color: rgba(0,0,0,0.5);
+}
+
+#drop-region h1 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0 0 .5rem;
+}
+
+#drop-region h4 {
+    color : rgba(0,0,0,0.5);
+}
+
+#drop-region input {
+    cursor: pointer;
+}
+
+
+#div-crop {
+    border: 1px dashed rgba(0,0,0,0.5);
+    color: rgba(0,0,0,0.6);
+    padding: 1em;
+    margin-top: 20px;
+    margin-right: 10px;
+    margin-bottom: 10px;
+    margin-left: 5px;
+    cursor: pointer;
+    position: relative;
+    text-align: center;
+    transition: opacity .1s ease-out;
+    display: none;
+}
+
+/*----------- Fin CSS pour Zone de Crop ---------*/
+</style>
+
+  </section>
+</template>
